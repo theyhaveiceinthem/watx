@@ -6,7 +6,7 @@
 <p><strong>From WebAssembly text to execution. Built from scratch in C++98.</strong></p>
 
 <p>
-  <a href="#build"><img src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=for-the-badge" alt="Version 0.2.0"></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=for-the-badge" alt="Version 0.2.0"></a>
   <a href="#build"><img src="https://img.shields.io/badge/C%2B%2B-98-00599C?style=for-the-badge&amp;logo=cplusplus&amp;logoColor=white" alt="Written in C++98"></a>
   <a href="#mvp-scope"><img src="https://img.shields.io/badge/WebAssembly-MVP-654FF0?style=for-the-badge&amp;logo=webassembly&amp;logoColor=white" alt="WebAssembly MVP"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT License"></a>
@@ -21,6 +21,7 @@
 </p>
 
 <p>
+  <a href="#installation">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#embedding-and-imports">Host modules</a> ·
   <a href="#flags">Flags</a> ·
@@ -36,6 +37,7 @@
 <summary><strong>Contents</strong></summary>
 
 - [Project status](#project-status)
+- [Installation](#installation)
 - [Quick start](#quick-start)
 - [Build](#build)
 - [Library artifacts](#library-artifacts)
@@ -62,11 +64,89 @@ watx implements its own text parser, module validator, binary encoder, binary
 decoder, interpreter, and native code emitters. It does not depend on an external
 WebAssembly compiler or runtime.
 
-**The runtime, JIT, and shared-library API are experimental.** The current macOS
-CLI and library have been built; execution tests remain deferred. The six platform targets have
-source implementations; cross-platform correctness and performance still need
-CI coverage. This is an evolving implementation, without a production-readiness
-or performance guarantee.
+**The runtime, JIT, and shared-library API are experimental.** Builds and smoke
+tests passed on all six platform and CPU combinations for version 0.2.0. Full
+MVP conformance and broader runtime correctness still need testing. This is an
+evolving implementation, without a production-readiness or performance guarantee.
+
+## Installation
+
+<p align="center">
+  <strong>macOS · Linux · Windows</strong><br>
+  <sub>Native x86_64 and ARM64 packages · CLI and shared library included</sub>
+</p>
+
+The installers download the matching package from
+[GitHub Releases](https://github.com/theyhaveiceinthem/watx/releases), verify its
+SHA-256 checksum, unpack it, and install the executable, libraries, public
+headers, CMake package, and license. The default version is **0.2.0**, which is
+available as a pre-release. No compiler or administrator access is needed for
+the default installation locations.
+
+### macOS and Linux
+
+Requires `curl`, `tar`, and either `shasum` or `sha256sum`.
+
+```sh
+curl -fL https://raw.githubusercontent.com/theyhaveiceinthem/watx/main/install.sh -o install.sh
+sh install.sh
+export PATH="$HOME/.local/bin:$PATH"
+watx --help
+```
+
+The default prefix is `$HOME/.local`: the CLI goes in `bin`, libraries in `lib`,
+headers in `include/watx`, and CMake files in `lib/cmake/watx`. Add the `export`
+line to your shell configuration, such as `~/.zshrc` or `~/.bashrc`, to keep watx
+on your PATH in new terminals. Library symlinks and the executable's relative
+library lookup paths are preserved; no `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH`
+setting is needed for the CLI.
+
+Choose a release and an absolute installation prefix:
+
+```sh
+sh install.sh --version v0.2.0 --prefix "$HOME/tools/watx"
+export PATH="$HOME/tools/watx/bin:$PATH"
+```
+
+Linux release binaries are built on Ubuntu 24.04 and require a compatible glibc
+environment. For other Linux environments, use the [source build](#build).
+
+### Windows
+
+Run these commands in **PowerShell 5.1 or newer**:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/theyhaveiceinthem/watx/main/install.ps1 -OutFile install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The default location is `%LOCALAPPDATA%\Programs\watx`. The installer places
+`watx.exe` and `watx.dll` together in `bin`, installs the import library and
+embedding files, and adds `bin` to your user PATH. Open a new terminal, then run
+`watx --help`. The execution-policy option applies only to that installer
+process.
+
+Choose a release and an absolute installation directory:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.2.0 -InstallDir "$env:LOCALAPPDATA\Programs\watx"
+```
+
+Pass `-NoPath` to leave your user PATH unchanged. Windows binaries use the MSVC
+runtime; install the matching Microsoft Visual C++ runtime if required by your
+system.
+
+### Manual installation and embedding
+
+Download the archive for your OS and CPU from
+[version 0.2.0](https://github.com/theyhaveiceinthem/watx/releases/tag/v0.2.0):
+`.tar.gz` for macOS/Linux or `.zip` for Windows. Unpack it and keep its `bin` and
+`lib` directories together under the same prefix. Add `bin` to PATH. The
+`SHA256SUMS.txt` release asset contains the archive checksums.
+
+For C++ projects, set `CMAKE_PREFIX_PATH` to the installed prefix, then use
+`find_package(watx CONFIG REQUIRED)` and link `watx::watx`. See the
+[embedding guide](docs/embedding.md).
 
 ## Quick start
 
@@ -81,9 +161,9 @@ Save this as `add.wat`:
 ```
 
 ```sh
-./watx add.wat -o add.wasm
-./watx add.wasm --run --function add -- i32:10 i32:5
-./watx add.wasm --run --function add --jit 0 -- i32:10 i32:5
+watx add.wat -o add.wasm
+watx add.wasm --run --function add -- i32:10 i32:5
+watx add.wasm --run --function add --jit 0 -- i32:10 i32:5
 ```
 
 A successful invocation of `add` prints `i32:15`. There are no subcommands: input
@@ -101,7 +181,9 @@ cmake --build build --config Release --parallel
 
 On macOS and Linux the executable is normally `build/watx`; with a Visual Studio
 multi-configuration generator it is normally `build/Release/watx.exe`. The
-examples below assume the executable is available as `./watx`.
+examples below assume the executable's directory is on PATH. For a local Unix
+build, use `export PATH="$PWD/build:$PATH"`; in PowerShell, use
+`$env:Path = "$PWD\build\Release;$env:Path"` with a Visual Studio generator.
 
 The project links the operating system thread library and the system math
 library where needed. It uses no C++11 thread or language facilities.
@@ -130,11 +212,11 @@ The package exposes `watx::watx` for embedding. See
 ## Compile
 
 ```sh
-./watx main.wat -o app.wasm
-./watx main.wat helpers.wat -o app.wasm
-./watx main.wat --validate-only
-./watx app.wasm --validate-only --debug
-./watx app.wasm --dump --dump-hex
+watx main.wat -o app.wasm
+watx main.wat helpers.wat -o app.wasm
+watx main.wat --validate-only
+watx app.wasm --validate-only --debug
+watx app.wasm --dump --dump-hex
 ```
 
 WAT inputs are assembled into one module in argument order. Each top-level file
@@ -169,7 +251,7 @@ i32.add
 ```
 
 ```sh
-./watx main.wat -o add.wasm
+watx main.wat -o add.wasm
 ```
 
 </details>
@@ -188,9 +270,9 @@ watx text extension; the output is ordinary MVP Wasm.
 ## Run an exported function
 
 ```sh
-./watx app.wasm --run --function add -- i32:10 i32:5
-./watx app.wat --run --function add -- i32:10 i32:5
-./watx app.wasm --run --function answer
+watx app.wasm --run --function add -- i32:10 i32:5
+watx app.wat --run --function add -- i32:10 i32:5
+watx app.wasm --run --function answer
 ```
 
 `--run` requires `--function NAME`, where `NAME` is a function export. Arguments
@@ -210,9 +292,9 @@ omits the prefix. Start functions execute during instantiation unless
 ## Native JIT
 
 ```sh
-./watx app.wasm --run --function add --jit -- i32:10 i32:5
-./watx app.wasm --run --function add --jit 4 -- i32:10 i32:5
-./watx app.wasm --run --function add --jit 0 -- i32:10 i32:5
+watx app.wasm --run --function add --jit -- i32:10 i32:5
+watx app.wasm --run --function add --jit 4 -- i32:10 i32:5
+watx app.wasm --run --function add --jit 0 -- i32:10 i32:5
 ```
 
 The interpreter is the default. `--jit` selects a native **baseline JIT** for the
@@ -231,8 +313,8 @@ executable-memory failures produce an error.
 ### Execution workers
 
 ```sh
-./watx app.wasm --run --function add --threads 4 -- i32:10 i32:5
-./watx app.wasm --run --function add --jit 4 -- i32:10 i32:5
+watx app.wasm --run --function add --threads 4 -- i32:10 i32:5
+watx app.wasm --run --function add --jit 4 -- i32:10 i32:5
 ```
 
 `--threads N` configures interpreter execution workers. `--jit [N]` selects the
@@ -287,9 +369,9 @@ and `1` for compilation, decoding, validation, output, or execution failures.
 ## Raw input and output
 
 ```sh
-./watx main.wat --raw-output > main.wasm
-./watx --raw-input - --run --function add -- i32:10 i32:5 < main.wasm
-./watx main.wasm --run --function add --raw -- i32:10 i32:5
+watx main.wat --raw-output > main.wasm
+watx --raw-input - --run --function add -- i32:10 i32:5 < main.wasm
+watx main.wasm --run --function add --raw -- i32:10 i32:5
 ```
 
 Raw output is the binary itself, with no textual header. Diagnostics go to
@@ -300,8 +382,8 @@ numeric text with the type prefix removed.
 ## Debugging and execution limits
 
 ```sh
-./watx app.wasm --run --function work --debug --trace --fuel 100000
-./watx app.wasm --run --function work --stack-limit 256 --memory-limit 1024
+watx app.wasm --run --function work --debug --trace --fuel 100000
+watx app.wasm --run --function work --stack-limit 256 --memory-limit 1024
 ```
 
 `--debug` enables diagnostics; it does not emit DWARF or Wasm name sections.
@@ -337,12 +419,12 @@ callback allowlists, so do not add `com.apple.security.cs.jit-write-allowlist`.
 JIT publication uses one mapping per engine. Under hardened macOS, use one
 prepared engine per process because the entitlement permits one JIT region.
 OS policies that prohibit dynamic executable memory prevent JIT use; interpreter
-execution does not allocate native code. All six targets still need build and
-runtime verification in CI.
+execution does not allocate native code. Version 0.2.0 passed native build and
+smoke checks on all six targets; this does not establish full MVP conformance.
 
 ## Embedding and imports
 
-Link `watx_core` and use the public headers under `include/watx/`.
+Link the installed `watx::watx` CMake target and use the public headers under `include/watx/`.
 `RuntimeImports` binds host functions, memories, tables, and globals;
 `RuntimeInstance` initializes a validated module and invokes functions.
 `JitEngine` implements the same execution interface as the interpreter.
@@ -378,16 +460,17 @@ sections are skipped for execution and retained when copying binary input.
 
 ## Testing
 
-The [native CI workflow](.github/workflows/ci.yml) builds and tests macOS, Linux,
-and Windows on x86_64 and ARM64. Each job runs the native validator checks and
-CLI smoke checks for the interpreter, JIT, execution worker settings, numeric
-arguments, memory, start functions, calls, traps, fuel limits, and includes.
-It also installs and uploads the CLI and shared library.
+Version 0.2.0 passed native builds and tests on macOS, Linux, and Windows on
+x86_64 and ARM64. Each job ran the native validator checks and CLI smoke checks
+for the interpreter, JIT, execution worker settings, numeric arguments, memory,
+start functions, calls, traps, fuel limits, and includes. Installation and
+artifact packaging also succeeded. The workflow was removed after those runs;
+the native tests remain available through CTest.
 
 These are initial checks rather than a full conformance suite. The optional
 Node conformance harness remains available for broader compiler coverage.
-No tests were run locally while adding the workflow; platform results depend
-on the GitHub Actions runs. See the [testing guide](docs/testing.md).
+The release installers have not yet been run through installation tests.
+See the [testing guide](docs/testing.md).
 
 ## Troubleshooting
 
