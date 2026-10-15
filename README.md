@@ -6,7 +6,7 @@
 <p><strong>From WebAssembly text to execution. Built from scratch in C++98.</strong></p>
 
 <p>
-  <a href="#build"><img src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=for-the-badge" alt="Version 0.1.0"></a>
+  <a href="#build"><img src="https://img.shields.io/badge/version-0.2.0-8b5cf6?style=for-the-badge" alt="Version 0.2.0"></a>
   <a href="#build"><img src="https://img.shields.io/badge/C%2B%2B-98-00599C?style=for-the-badge&amp;logo=cplusplus&amp;logoColor=white" alt="Written in C++98"></a>
   <a href="#mvp-scope"><img src="https://img.shields.io/badge/WebAssembly-MVP-654FF0?style=for-the-badge&amp;logo=webassembly&amp;logoColor=white" alt="WebAssembly MVP"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e?style=for-the-badge" alt="MIT License"></a>
