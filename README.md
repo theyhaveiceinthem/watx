@@ -38,6 +38,9 @@
 
 - [Project status](#project-status)
 - [Installation](#installation)
+  - [macOS](#macos)
+  - [Linux](#linux)
+  - [Windows](#windows)
 - [Quick start](#quick-start)
 - [Build](#build)
 - [Library artifacts](#library-artifacts)
@@ -80,33 +83,44 @@ The installers download the matching package from
 [GitHub Releases](https://github.com/theyhaveiceinthem/watx/releases), verify its
 SHA-256 checksum, unpack it, and install the executable, libraries, public
 headers, CMake package, and license. The default version is **0.2.0**, which is
-available as a pre-release. No compiler or administrator access is needed for
-the default installation locations.
+available as a pre-release. No compiler is needed. The macOS and Linux commands
+below install system-wide under `/usr/local` using `sudo`; Windows installs for
+the current user without administrator access.
 
-### macOS and Linux
+### macOS
 
-Requires `curl`, `tar`, and either `shasum` or `sha256sum`.
+Requires `curl`, `tar`, and `shasum`, which are included with macOS.
 
 ```sh
 curl -fL https://raw.githubusercontent.com/theyhaveiceinthem/watx/main/install.sh -o install.sh
-sudo sh install.sh
-export PATH="$HOME/.local/bin:$PATH"
+sudo sh install.sh --prefix /usr/local
+export PATH="/usr/local/bin:$PATH"
 watx --help
 ```
 
-The default prefix is `$HOME/.local`: the CLI goes in `bin`, libraries in `lib`,
-headers in `include/watx`, and CMake files in `lib/cmake/watx`. Add the `export`
-line to your shell configuration, such as `~/.zshrc` or `~/.bashrc`, to keep watx
-on your PATH in new terminals. Library symlinks and the executable's relative
-library lookup paths are preserved; no `LD_LIBRARY_PATH` or `DYLD_LIBRARY_PATH`
-setting is needed for the CLI.
+Installs the CLI to `/usr/local/bin/watx` and the shared library to
+`/usr/local/lib`. Add the `export` line to `~/.zshrc` if `/usr/local/bin` is not
+already on your PATH. The installer detects Intel and Apple Silicon Macs.
+No `DYLD_LIBRARY_PATH` setting is needed for the CLI.
 
-Choose a release and an absolute installation prefix:
+### Linux
+
+Requires `curl`, `tar`, and either `sha256sum` or `shasum`.
 
 ```sh
-sudo sh install.sh --version v0.2.0 --prefix "$HOME/tools/watx"
-export PATH="$HOME/tools/watx/bin:$PATH"
+curl -fL https://raw.githubusercontent.com/theyhaveiceinthem/watx/main/install.sh -o install.sh
+sudo sh install.sh --prefix /usr/local
+export PATH="/usr/local/bin:$PATH"
+watx --help
 ```
+
+Installs the CLI to `/usr/local/bin/watx` and the shared library to
+`/usr/local/lib`. Add the `export` line to your shell configuration, such as
+`~/.bashrc`, if `/usr/local/bin` is not already on your PATH. The installer
+detects x86_64 and ARM64. No `LD_LIBRARY_PATH` setting is needed for the CLI.
+
+Always pass `--prefix /usr/local` with `sudo`: otherwise `sudo` may change
+`$HOME` to `/root`, causing the default installation to land in `/root/.local`.
 
 Linux release binaries are built on Ubuntu 24.04 and require a compatible glibc
 environment. For other Linux environments, use the [source build](#build).
@@ -137,6 +151,17 @@ runtime; install the matching Microsoft Visual C++ runtime if required by your
 system.
 
 ### Manual installation and embedding
+
+For a user installation on macOS or Linux, choose an absolute prefix without
+`sudo`. You can also select a release explicitly:
+
+```sh
+sh install.sh --version v0.2.0 --prefix "$HOME/tools/watx"
+export PATH="$HOME/tools/watx/bin:$PATH"
+```
+
+Without `--prefix`, the shell installer defaults to `$HOME/.local`. Each Unix
+prefix contains `bin`, `lib`, `include/watx`, and `lib/cmake/watx`.
 
 Download the archive for your OS and CPU from
 [version 0.2.0](https://github.com/theyhaveiceinthem/watx/releases/tag/v0.2.0):
