@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem in watx.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Share only input files and logs that you are allowed to make public.
+        For security vulnerabilities, follow SECURITY.md instead of posting
+        exploit details here.
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or release
+      description: Identify the code version where the problem occurs.
+      placeholder: Commit hash or release identifier
+    validations:
+      required: false
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      description: Include the compiler/toolchain if relevant.
+      placeholder: e.g. macOS, ARM64
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and observed behavior
+      description: Include the command and the complete relevant error or output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect watx to do?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal input or reproduction steps
+      description: Include a small WAT/Wasm sample or steps that reproduce the problem.
+      render: text
+    validations:
+      required: false

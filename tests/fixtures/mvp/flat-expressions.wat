@@ -1,0 +1,16 @@
+(module
+  (memory (export "memory") 1)
+  (table (export "table") 1 funcref)
+  (func $target)
+  (type $unary (func (param i32) (result i32)))
+  (func (export "emptyTypeUse") (type $unary) (param) (result) local.get 0)
+  (global $value (export "value") i32 i32.const 42)
+  (data (offset i32.const 4) "data")
+  (elem (offset i32.const 0) $target)
+  (func (export "pair") (param i32 i32) (result i32) (local f32 f64)
+    local.get 0 local.get 1 i32.add)
+  (func (export "emptyResultBlock") (result i32)
+    block (result) (result i32) (result)
+      i32.const 42
+    end)
+)
