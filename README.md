@@ -89,7 +89,7 @@ Requires `curl`, `tar`, and either `shasum` or `sha256sum`.
 
 ```sh
 curl -fL https://raw.githubusercontent.com/theyhaveiceinthem/watx/main/install.sh -o install.sh
-sh install.sh
+sudo sh install.sh
 export PATH="$HOME/.local/bin:$PATH"
 watx --help
 ```
@@ -104,7 +104,7 @@ setting is needed for the CLI.
 Choose a release and an absolute installation prefix:
 
 ```sh
-sh install.sh --version v0.2.0 --prefix "$HOME/tools/watx"
+sudo sh install.sh --version v0.2.0 --prefix "$HOME/tools/watx"
 export PATH="$HOME/tools/watx/bin:$PATH"
 ```
 
