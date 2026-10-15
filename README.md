@@ -378,14 +378,16 @@ sections are skipped for execution and retained when copying binary input.
 
 ## Testing
 
-Execution tests are deferred at the user's request. The macOS CLI and shared
-library have been rebuilt; no runtime tests were run, and the other platform
-builds remain unverified.
+The [native CI workflow](.github/workflows/ci.yml) builds and tests macOS, Linux,
+and Windows on x86_64 and ARM64. Each job runs the native validator checks and
+CLI smoke checks for the interpreter, JIT, execution worker settings, numeric
+arguments, memory, start functions, calls, traps, fuel limits, and includes.
+It also installs and uploads the CLI and shared library.
 
-The native validator and optional Node conformance harnesses remain available. They do not
-yet establish coverage for watx's own runtime or native emitters. The
-[testing guide](docs/testing.md) describes the current harnesses and work needed
-for future GitHub Actions coverage.
+These are initial checks rather than a full conformance suite. The optional
+Node conformance harness remains available for broader compiler coverage.
+No tests were run locally while adding the workflow; platform results depend
+on the GitHub Actions runs. See the [testing guide](docs/testing.md).
 
 ## Troubleshooting
 

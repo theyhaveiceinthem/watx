@@ -1,0 +1,56 @@
+name: Native build and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+            cmake_args: ""
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            cmake_args: ""
+          - target: macos-x86_64
+            runner: macos-15-intel
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=x86_64
+          - target: macos-arm64
+            runner: macos-15
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64
+          - target: windows-x86_64
+            runner: windows-2025
+            cmake_args: -A x64
+          - target: windows-arm64
+            runner: windows-11-arm
+            cmake_args: -A ARM64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON ${{ matrix.cmake_args }}
+      - name: Build CLI, library, and checks
+        run: cmake --build build --config Release --parallel 2
+      - name: Run validator and native runtime checks
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Install artifacts
+        run: cmake --install build --config Release --prefix stage
+      - name: Package artifacts
+        run: cmake -E tar cf watx-${{ matrix.target }}.tar --format=gnutar stage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: watx-${{ matrix.target }}
+          path: watx-${{ matrix.target }}.tar
+          if-no-files-found: error

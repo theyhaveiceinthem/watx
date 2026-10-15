@@ -91,6 +91,26 @@ if(BUILD_TESTING)
     set_target_properties(watx_validator_tests PROPERTIES
         CXX_STANDARD 98 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     add_test(NAME validator COMMAND watx_validator_tests)
+    if(CMAKE_GENERATOR_PLATFORM)
+        set(WATX_TEST_PROCESSOR "${CMAKE_GENERATOR_PLATFORM}")
+    elseif(CMAKE_OSX_ARCHITECTURES)
+        set(WATX_TEST_PROCESSOR "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(WATX_TEST_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    string(TOLOWER "${WATX_TEST_PROCESSOR}" WATX_TEST_PROCESSOR)
+    set(WATX_TEST_ARCH "")
+    if(WATX_TEST_PROCESSOR MATCHES "^(x86_64|amd64|x64)$")
+        set(WATX_TEST_ARCH "x86_64")
+    elseif(WATX_TEST_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        set(WATX_TEST_ARCH "arm64")
+    endif()
+    add_test(NAME runtime COMMAND ${CMAKE_COMMAND}
+        "-DWATX_EXECUTABLE=$<TARGET_FILE:watx>"
+        "-DWATX_TEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/runtime-smoke"
+        "-DWATX_EXPECTED_ARCH=${WATX_TEST_ARCH}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_smoke.cmake)
+    set_tests_properties(runtime PROPERTIES TIMEOUT 300)
 endif()
 install(TARGETS watx RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS watx_core EXPORT watxTargets
