@@ -25,12 +25,7 @@ class Lock {
 };
 }
 void InterpreterExecutor::execute(RuntimeFrame &frame) {
-    uint32_t pc = 0;
-    while (!frame.finished) {
-        pc = runtime_step(&frame, pc);
-        if (pc == ~static_cast<uint32_t>(0) && !frame.finished)
-            throw std::runtime_error("interpreter stopped without finishing the frame");
-    }
+    runtime_interpret(&frame);
 }
 struct ThreadedExecutor::Impl {
     struct Job {

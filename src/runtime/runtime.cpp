@@ -1,3 +1,5 @@
+#include "inline_vector.h"
+#include "value_stack.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -9,6 +11,7 @@
 #include <stdexcept>
 #include <watx/runtime/imports.h>
 #include <watx/runtime/runtime.h>
+#include <watx/validator.h>
 
 namespace watx {
 namespace {
@@ -28,11 +31,13 @@ struct ExecutionContext {
           cancelled(c) {}
 };
 struct State {
-    std::vector<RuntimeValue> stack, locals;
-    std::vector<Control> controls;
+    RuntimeNativeFrame native;
+    ValueStack stack;
+    InlineVector<RuntimeValue, 8> locals;
+    InlineVector<Control, 8> controls;
     uint32_t pc;
     ExecutionContext *execution;
-    State() : pc(0), execution(0) {}
+    State() : stack(native), pc(0), execution(0) {}
 };
 struct CallDepth {
     uint32_t &depth;
@@ -742,6 +747,13 @@ void RuntimeMemory::wake_all() {
 }
 
 struct RuntimeInstance::Impl {
+    struct ControlTarget {
+        uint32_t end, alternate;
+        uint32_t immediate;
+        unsigned char opcode;
+        RuntimeValue constant;
+        ControlTarget() : end(invalid_pc), alternate(invalid_pc), immediate(0), opcode(0) {}
+    };
     const Module &mod;
     RuntimeOptions options;
     RuntimeExecutor *executor;
@@ -753,12 +765,45 @@ struct RuntimeInstance::Impl {
     std::vector<RuntimeMemory *> owned_memories;
     std::vector<RuntimeTable *> owned_tables;
     std::vector<RuntimeGlobal *> owned_globals;
+    std::vector<std::vector<ControlTarget> > control_targets;
+    std::vector<std::size_t> stack_limits;
     bool initialized, initialization_started;
     Impl(const Module &m, const RuntimeOptions &o, const RuntimeImports *im)
         : mod(m), options(o), executor(0), owner(0), initialized(false),
           initialization_started(false) {
         if (im)
             imports = *im;
+        control_targets.resize(m.functions.size());
+        stack_limits.resize(m.functions.size());
+        for (std::size_t f = 0; f < m.functions.size(); ++f) {
+            stack_limits[f] = analyze_function_stack(m, f);
+            const std::vector<Instruction> &code = m.functions[f].code;
+            std::vector<ControlTarget> &targets = control_targets[f];
+            targets.resize(code.size());
+            std::vector<uint32_t> nesting;
+            for (std::size_t pc = 0; pc < code.size(); ++pc) {
+                const unsigned char op = code[pc].opcode;
+                targets[pc].opcode = op;
+                targets[pc].immediate = code[pc].immediate;
+                if (op >= 0x41 && op <= 0x44) {
+                    const ValueType type = op == 0x41   ? TYPE_I32
+                                           : op == 0x42 ? TYPE_I64
+                                           : op == 0x43 ? TYPE_F32
+                                                        : TYPE_F64;
+                    targets[pc].constant =
+                        RuntimeValue(type, op == 0x41 || op == 0x43 ? read_u32(code[pc].bytes, 0)
+                                                                    : read_u64(code[pc].bytes, 0));
+                }
+                if (op == 0x02 || op == 0x03 || op == 0x04)
+                    nesting.push_back(static_cast<uint32_t>(pc));
+                else if (op == 0x05 && !nesting.empty())
+                    targets[nesting.back()].alternate = static_cast<uint32_t>(pc);
+                else if (op == 0x0b && !nesting.empty()) {
+                    targets[nesting.back()].end = static_cast<uint32_t>(pc);
+                    nesting.pop_back();
+                }
+            }
+        }
     }
     ~Impl() {
         for (std::size_t i = 0; i < owned_memories.size(); ++i)
@@ -791,9 +836,310 @@ static RuntimeValue eval_const(const std::vector<Instruction> &code,
     throw std::runtime_error("unsupported constant expression");
 }
 
-static void invoke_internal(RuntimeInstance::Impl *impl, uint32_t function,
-                            const std::vector<RuntimeValue> &args,
-                            std::vector<RuntimeValue> &result, ExecutionContext &execution);
+static bool invoke_internal(RuntimeInstance::Impl *impl, uint32_t function,
+                            const RuntimeValue *args, std::size_t argument_count,
+                            RuntimeValue &result, ExecutionContext &execution);
+
+RuntimeNativeFrame *runtime_native_frame(RuntimeFrame *frame) {
+    if (!frame || !frame->instance || !frame->state)
+        return 0;
+    RuntimeInstance::Impl *impl = frame->instance->impl_;
+    State *state = static_cast<State *>(frame->state);
+    if (impl->options.trace || impl->options.fuel || !state->execution ||
+        state->execution->cancelled || frame->function_index >= impl->mod.functions.size())
+        return 0;
+    RuntimeValue value;
+    if (sizeof(value) != 16 || sizeof(ValueType) != 4 || sizeof(std::size_t) != 8 ||
+        offsetof(RuntimeNativeFrame, stack) != 0 || offsetof(RuntimeNativeFrame, size) != 8 ||
+        offsetof(RuntimeNativeFrame, locals) != 16 ||
+        reinterpret_cast<char *>(&value.bits) - reinterpret_cast<char *>(&value) != 8 ||
+        reinterpret_cast<char *>(&value.type) != reinterpret_cast<char *>(&value))
+        return 0;
+    state->native.locals = state->locals.empty() ? 0 : &state->locals[0];
+    return &state->native;
+}
+
+void runtime_interpret(RuntimeFrame *frame) {
+    if (!frame)
+        throw std::runtime_error("invalid runtime frame");
+    RuntimeNativeFrame *native = runtime_native_frame(frame);
+    uint32_t pc = 0;
+    if (!native) {
+        while (!frame->finished) {
+            pc = runtime_step(frame, pc);
+            if (pc == invalid_pc && !frame->finished)
+                throw std::runtime_error("interpreter stopped without finishing the frame");
+        }
+        return;
+    }
+    const std::vector<RuntimeInstance::Impl::ControlTarget> &code =
+        frame->instance->impl_->control_targets[frame->function_index];
+    RuntimeValue *values = native->stack;
+    RuntimeValue *locals = native->locals;
+    std::size_t size = native->size;
+    while (!frame->finished) {
+        if (pc >= code.size()) {
+            native->size = size;
+            runtime_step(frame, pc);
+            break;
+        }
+        const RuntimeInstance::Impl::ControlTarget &in = code[pc];
+        const unsigned op = in.opcode;
+        switch (op) {
+        case 0x01:
+            break;
+        case 0x41:
+        case 0x42:
+        case 0x43:
+        case 0x44:
+            values[size++] = in.constant;
+            break;
+        case 0x20:
+            values[size++] = locals[in.immediate];
+            break;
+        case 0x21:
+            locals[in.immediate] = values[--size];
+            break;
+        case 0x22:
+            locals[in.immediate] = values[size - 1];
+            break;
+        case 0x1a:
+            --size;
+            break;
+        case 0x45:
+            values[size - 1] = boolv(static_cast<uint32_t>(values[size - 1].bits) == 0);
+            break;
+        case 0x50:
+            values[size - 1] = boolv(values[size - 1].bits == 0);
+            break;
+        case 0x46:
+        case 0x47:
+        case 0x48:
+        case 0x49:
+        case 0x4a:
+        case 0x4b:
+        case 0x4c:
+        case 0x4d:
+        case 0x4e:
+        case 0x4f:
+        case 0x6a:
+        case 0x6b:
+        case 0x6c:
+        case 0x71:
+        case 0x72:
+        case 0x73:
+        case 0x74:
+        case 0x75:
+        case 0x76:
+        case 0x77:
+        case 0x78: {
+            const RuntimeValue b = values[--size], a = values[size - 1];
+            const uint32_t x = static_cast<uint32_t>(a.bits), y = static_cast<uint32_t>(b.bits);
+            uint32_t result = 0;
+            switch (op) {
+            case 0x46:
+                result = x == y;
+                break;
+            case 0x47:
+                result = x != y;
+                break;
+            case 0x48:
+                result = a.as_i32() < b.as_i32();
+                break;
+            case 0x49:
+                result = x < y;
+                break;
+            case 0x4a:
+                result = a.as_i32() > b.as_i32();
+                break;
+            case 0x4b:
+                result = x > y;
+                break;
+            case 0x4c:
+                result = a.as_i32() <= b.as_i32();
+                break;
+            case 0x4d:
+                result = x <= y;
+                break;
+            case 0x4e:
+                result = a.as_i32() >= b.as_i32();
+                break;
+            case 0x4f:
+                result = x >= y;
+                break;
+            case 0x6a:
+                result = x + y;
+                break;
+            case 0x6b:
+                result = x - y;
+                break;
+            case 0x6c:
+                result = x * y;
+                break;
+            case 0x71:
+                result = x & y;
+                break;
+            case 0x72:
+                result = x | y;
+                break;
+            case 0x73:
+                result = x ^ y;
+                break;
+            case 0x74:
+                result = x << (y & 31);
+                break;
+            case 0x75:
+                result = ashr32(x, y);
+                break;
+            case 0x76:
+                result = x >> (y & 31);
+                break;
+            case 0x77:
+                result = rotl32(x, y);
+                break;
+            case 0x78:
+                result = rotr32(x, y);
+                break;
+            }
+            values[size - 1] = RuntimeValue::i32(result);
+            break;
+        }
+        case 0x51:
+        case 0x52:
+        case 0x53:
+        case 0x54:
+        case 0x55:
+        case 0x56:
+        case 0x57:
+        case 0x58:
+        case 0x59:
+        case 0x5a:
+        case 0x7c:
+        case 0x7d:
+        case 0x7e:
+        case 0x83:
+        case 0x84:
+        case 0x85:
+        case 0x86:
+        case 0x87:
+        case 0x88:
+        case 0x89:
+        case 0x8a: {
+            const RuntimeValue b = values[--size], a = values[size - 1];
+            const uint64_t x = a.bits, y = b.bits;
+            uint64_t result = 0;
+            switch (op) {
+            case 0x51:
+                result = x == y;
+                break;
+            case 0x52:
+                result = x != y;
+                break;
+            case 0x53:
+                result = a.as_i64() < b.as_i64();
+                break;
+            case 0x54:
+                result = x < y;
+                break;
+            case 0x55:
+                result = a.as_i64() > b.as_i64();
+                break;
+            case 0x56:
+                result = x > y;
+                break;
+            case 0x57:
+                result = a.as_i64() <= b.as_i64();
+                break;
+            case 0x58:
+                result = x <= y;
+                break;
+            case 0x59:
+                result = a.as_i64() >= b.as_i64();
+                break;
+            case 0x5a:
+                result = x >= y;
+                break;
+            case 0x7c:
+                result = x + y;
+                break;
+            case 0x7d:
+                result = x - y;
+                break;
+            case 0x7e:
+                result = x * y;
+                break;
+            case 0x83:
+                result = x & y;
+                break;
+            case 0x84:
+                result = x | y;
+                break;
+            case 0x85:
+                result = x ^ y;
+                break;
+            case 0x86:
+                result = x << (y & 63);
+                break;
+            case 0x87:
+                result = ashr64(x, static_cast<uint32_t>(y));
+                break;
+            case 0x88:
+                result = x >> (y & 63);
+                break;
+            case 0x89:
+                result = rotl64(x, static_cast<uint32_t>(y));
+                break;
+            case 0x8a:
+                result = rotr64(x, static_cast<uint32_t>(y));
+                break;
+            }
+            values[size - 1] = RuntimeValue(op <= 0x5a ? TYPE_I32 : TYPE_I64, result);
+            break;
+        }
+        case 0xa0:
+        case 0xa1:
+        case 0xa2:
+        case 0xa3: {
+            const double y = values[--size].as_f64(), x = values[size - 1].as_f64();
+            const double result = op == 0xa0   ? x + y
+                                  : op == 0xa1 ? x - y
+                                  : op == 0xa2 ? x * y
+                                               : x / y;
+            values[size - 1] = RuntimeValue::f64(result);
+            break;
+        }
+        case 0x9f:
+            values[size - 1] = RuntimeValue::f64(std::sqrt(values[size - 1].as_f64()));
+            break;
+        case 0xb7:
+            values[size - 1] = RuntimeValue::f64(static_cast<double>(values[size - 1].as_i32()));
+            break;
+        case 0xb8:
+            values[size - 1] = RuntimeValue::f64(static_cast<double>(values[size - 1].as_u32()));
+            break;
+        case 0xa7:
+            values[size - 1] = RuntimeValue::i32(static_cast<uint32_t>(values[size - 1].bits));
+            break;
+        case 0xac:
+            values[size - 1] = RuntimeValue::i64(
+                static_cast<uint64_t>(static_cast<int64_t>(values[size - 1].as_i32())));
+            break;
+        case 0xad:
+            values[size - 1] = RuntimeValue::i64(values[size - 1].as_u32());
+            break;
+        default:
+            native->size = size;
+            pc = runtime_step(frame, pc);
+            size = native->size;
+            values = native->stack;
+            if (pc == invalid_pc && !frame->finished)
+                throw std::runtime_error("interpreter stopped without finishing the frame");
+            continue;
+        }
+        ++pc;
+    }
+    native->size = size;
+}
 
 uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc) {
     if (!frame || !frame->instance)
@@ -849,21 +1195,9 @@ uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc) {
             bool enter = true;
             if (in.opcode == 0x04)
                 enter = truth(u32(pop(*s)));
-            uint32_t end = pc + 1, els = invalid_pc;
-            int nest = 0;
-            for (uint32_t k = pc + 1; k < fn.code.size(); ++k) {
-                unsigned char x = fn.code[k].opcode;
-                if (x == 0x02 || x == 0x03 || x == 0x04)
-                    ++nest;
-                else if (x == 0x0b) {
-                    if (!nest) {
-                        end = k;
-                        break;
-                    }
-                    --nest;
-                } else if (x == 0x05 && !nest)
-                    els = k;
-            }
+            const RuntimeInstance::Impl::ControlTarget &target =
+                impl->control_targets[frame->function_index][pc];
+            uint32_t end = target.end, els = target.alternate;
             if (end >= fn.code.size())
                 throw std::runtime_error("malformed control instruction");
             Control c;
@@ -972,15 +1306,15 @@ uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc) {
             if (callee.type_index >= impl->mod.types.size())
                 throw std::runtime_error("invalid function type");
             const FunctionType &ty = impl->mod.types[callee.type_index];
-            std::vector<RuntimeValue> av(ty.parameters.size());
-            for (std::size_t j = av.size(); j > 0; --j) {
-                av[j - 1] = pop(*s);
-                expect_type(av[j - 1], ty.parameters[j - 1]);
-            }
-            std::vector<RuntimeValue> rv;
-            invoke_internal(impl, in.immediate, av, rv, *s->execution);
-            for (std::size_t j = 0; j < rv.size(); ++j)
-                s->stack.push_back(rv[j]);
+            if (s->stack.size() < ty.parameters.size())
+                throw std::runtime_error("operand stack underflow");
+            const std::size_t base = s->stack.size() - ty.parameters.size();
+            RuntimeValue result;
+            const bool has_result = invoke_internal(impl, in.immediate, s->native.stack + base,
+                                                    ty.parameters.size(), result, *s->execution);
+            s->stack.resize(base);
+            if (has_result)
+                s->stack.push_back(result);
             break;
         }
         case 0x11: {
@@ -1008,15 +1342,16 @@ uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc) {
                            impl->mod.types[in.immediate]))
                 throw std::runtime_error("indirect call type mismatch");
             const FunctionType &ty = impl->mod.types[in.immediate];
-            std::vector<RuntimeValue> av(ty.parameters.size());
-            for (std::size_t j = av.size(); j > 0; --j) {
-                av[j - 1] = pop(*s);
-                expect_type(av[j - 1], ty.parameters[j - 1]);
-            }
-            std::vector<RuntimeValue> rv;
-            invoke_internal(target_impl, ref.function_index, av, rv, *s->execution);
-            for (std::size_t j = 0; j < rv.size(); ++j)
-                s->stack.push_back(rv[j]);
+            if (s->stack.size() < ty.parameters.size())
+                throw std::runtime_error("operand stack underflow");
+            const std::size_t base = s->stack.size() - ty.parameters.size();
+            RuntimeValue result;
+            const bool has_result =
+                invoke_internal(target_impl, ref.function_index, s->native.stack + base,
+                                ty.parameters.size(), result, *s->execution);
+            s->stack.resize(base);
+            if (has_result)
+                s->stack.push_back(result);
             break;
         }
         case 0x1a:
@@ -1503,18 +1838,20 @@ uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc) {
 static RuntimeValue zero_value(ValueType t) {
     return RuntimeValue(t, 0);
 }
-static void invoke_internal(RuntimeInstance::Impl *impl, uint32_t fi,
-                            const std::vector<RuntimeValue> &args,
-                            std::vector<RuntimeValue> &result, ExecutionContext &execution) {
+static bool invoke_internal(RuntimeInstance::Impl *impl, uint32_t fi, const RuntimeValue *args,
+                            std::size_t argument_count, RuntimeValue &result,
+                            ExecutionContext &execution) {
     if (fi >= impl->mod.functions.size())
         throw std::runtime_error("invalid function index");
     const Function &fn = impl->mod.functions[fi];
     if (fn.type_index >= impl->mod.types.size())
         throw std::runtime_error("invalid function type");
     const FunctionType &ft = impl->mod.types[fn.type_index];
-    if (args.size() != ft.parameters.size())
+    if (ft.results.size() > 1)
+        throw std::runtime_error("MVP functions may return at most one value");
+    if (argument_count != ft.parameters.size())
         throw std::runtime_error("argument count mismatch");
-    for (std::size_t i = 0; i < args.size(); ++i)
+    for (std::size_t i = 0; i < argument_count; ++i)
         expect_type(args[i], ft.parameters[i]);
     if (fn.imported) {
         std::map<RuntimeImportKey, RuntimeFunctionImport>::const_iterator it =
@@ -1522,19 +1859,27 @@ static void invoke_internal(RuntimeInstance::Impl *impl, uint32_t fi,
         if (it == impl->imports.functions.end() || !it->second.callback)
             throw std::runtime_error("unresolved function import '" + fn.import_module + "." +
                                      fn.import_name + "'");
-        result = it->second.callback(it->second.context, args);
-        if (result.size() != ft.results.size())
+        std::vector<RuntimeValue> arguments;
+        if (argument_count)
+            arguments.assign(args, args + argument_count);
+        const std::vector<RuntimeValue> values = it->second.callback(it->second.context, arguments);
+        if (values.size() != ft.results.size())
             throw std::runtime_error("host function result count mismatch");
-        for (std::size_t i = 0; i < result.size(); ++i)
-            expect_type(result[i], ft.results[i]);
-        return;
+        for (std::size_t i = 0; i < values.size(); ++i)
+            expect_type(values[i], ft.results[i]);
+        if (!values.empty())
+            result = values[0];
+        return !values.empty();
     }
     if (execution.depth >= impl->options.stack_limit)
         throw std::runtime_error("call stack exhausted");
     CallDepth depth(execution.depth);
     State state;
+    state.stack.reserve(impl->stack_limits[fi]);
     state.execution = &execution;
-    state.locals = args;
+    state.locals.reserve(argument_count + fn.locals.size());
+    for (std::size_t i = 0; i < argument_count; ++i)
+        state.locals.push_back(args[i]);
     for (std::size_t i = 0; i < fn.locals.size(); ++i)
         state.locals.push_back(zero_value(fn.locals[i].type));
     if (fn.code.empty()) {
@@ -1552,16 +1897,7 @@ static void invoke_internal(RuntimeInstance::Impl *impl, uint32_t fi,
     if (impl->executor)
         impl->executor->execute(frame);
     else
-        while (!frame.finished) {
-            uint32_t next = runtime_step(&frame, state.pc);
-            if (frame.finished)
-                break;
-            if (next == invalid_pc) {
-                frame.finished = true;
-                break;
-            }
-            state.pc = next;
-        }
+        runtime_interpret(&frame);
     if (!frame.finished && !frame.failed)
         throw std::runtime_error("runtime executor returned before the function finished");
     if (frame.failed)
@@ -1572,9 +1908,10 @@ static void invoke_internal(RuntimeInstance::Impl *impl, uint32_t fi,
             throw std::runtime_error("function did not produce a result");
         RuntimeValue v = state.stack.back();
         expect_type(v, ft.results[0]);
-        result.push_back(v);
+        result = v;
     } else if (!state.stack.empty())
         throw std::runtime_error("unexpected function result");
+    return !ft.results.empty();
 }
 
 RuntimeInstance::RuntimeInstance(const Module &m, const RuntimeOptions &o)
@@ -1762,10 +2099,10 @@ void RuntimeInstance::initialize() {
             p->functions[eoff[i] + j] = RuntimeFunctionRef(this, e.functions[j]);
     }
     if (impl_->options.run_start && m.has_start) {
-        std::vector<RuntimeValue> r;
+        RuntimeValue r;
         ExecutionContext execution(impl_->options.fuel, runtime_current_thread_id(),
                                    runtime_current_cancel_flag(), runtime_current_fuel_budget());
-        invoke_internal(impl_, m.start, std::vector<RuntimeValue>(), r, execution);
+        invoke_internal(impl_, m.start, 0, 0, r, execution);
     }
     impl_->initialized = true;
 }
@@ -1787,7 +2124,9 @@ std::vector<RuntimeValue> RuntimeInstance::invoke(uint32_t f,
     std::vector<RuntimeValue> r;
     ExecutionContext execution(impl_->options.fuel, runtime_current_thread_id(),
                                runtime_current_cancel_flag(), runtime_current_fuel_budget());
-    invoke_internal(impl_, f, args, r, execution);
+    RuntimeValue value;
+    if (invoke_internal(impl_, f, args.empty() ? 0 : &args[0], args.size(), value, execution))
+        r.push_back(value);
     return r;
 }
 

@@ -109,5 +109,15 @@ built-in guest thread imports or application modules are installed by the CLI.
 
 ## Verification
 
-The macOS library and CLI have been built. These examples, runtime execution,
-installed package discovery, and other platform builds remain untested.
+The native embedding checks cover custom host callbacks, argument order, direct
+and indirect calls, host result errors, start functions, fuel, and execution
+workers with both engines. Optimization checks have run on ARM64 macOS and on
+x86_64 macOS through Rosetta. The new optimization paths still need native
+Windows and Linux verification. Installed package consumer tests remain separate
+from these runtime checks.
+
+Modules must remain immutable while instances or prepared JIT engines use them.
+The runtime caches decoded instructions and control targets when an instance is
+created. A JIT engine rejects execution with an instance for a different module
+object. Fuel, tracing, and cancellation contexts select the checked instruction
+path instead of the direct numeric path.

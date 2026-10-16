@@ -6,6 +6,7 @@
 #include <vector>
 #include <watx/export.h>
 #include <watx/model.h>
+#include <watx/runtime/native_frame.h>
 #include <watx/runtime/sync.h>
 namespace watx {
 struct WATX_API RuntimeValue {
@@ -96,6 +97,7 @@ struct RuntimeFunctionImport {
     RuntimeFunctionImport(Callback c, void *p = 0) : callback(c), context(p) {}
 };
 WATX_API uint32_t runtime_step(RuntimeFrame *frame, uint32_t pc);
+WATX_API void runtime_interpret(RuntimeFrame *frame);
 class WATX_API RuntimeExecutor {
   public:
     virtual ~RuntimeExecutor() {}
@@ -126,6 +128,8 @@ class WATX_API RuntimeInstance {
     RuntimeInstance &operator=(const RuntimeInstance &);
     Impl *impl_;
     friend uint32_t runtime_step(RuntimeFrame *, uint32_t);
+    friend void runtime_interpret(RuntimeFrame *);
+    friend RuntimeNativeFrame *runtime_native_frame(RuntimeFrame *);
 };
 WATX_API std::string format_runtime_value(const RuntimeValue &value, bool raw = false);
 }

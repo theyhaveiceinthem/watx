@@ -1,9 +1,9 @@
 # Testing watx
 
-The macOS CLI and shared library have been built. No runtime executions or
-tests were run for the new binary reader, interpreter, JIT, runtime workers,
-shared libraries, or CLI expansion. The commands below describe the available checks; they have not been executed
-locally for this change.
+Version 0.2.0 passed native build and smoke checks on all six platform targets.
+The subsequent interpreter and JIT optimization checks have run on ARM64 macOS
+and x86_64 macOS through Rosetta. Native Windows and Linux runs of the new
+optimization paths remain outstanding. Smoke checks are not full conformance.
 
 The default CMake build uses C++98 with compiler extensions disabled and warning
 flags enabled. No external WAT compiler is used to build or test watx.
@@ -14,9 +14,26 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-CTest runs the native validator checks in `tests/validator_smoke.cpp` and the
-CLI checks in `tests/runtime_smoke.cmake`. The optional conformance harness below
-uses Node as an independent execution engine.
+CTest runs the native validator checks in `tests/validator_smoke.cpp`, embedding
+checks in `tests/runtime_embedding.cpp`, and CLI checks in
+`tests/runtime_smoke.cmake`. The optional conformance and differential harnesses
+use Node as an independent execution engine.
+
+## Numeric differential checks
+
+```sh
+node tests/jit_differential.cjs build/watx
+```
+
+Use the actual executable path, such as `build/Release/watx.exe`, for Visual
+Studio builds. The harness generates a module, calculates reference results in
+Node/V8, and checks 540 results from the interpreter and JIT. Cases include
+signed and unsigned arithmetic, comparisons, overflow, masked shifts, rotations,
+floating-point special values, conversions, deep stacks, and many locals.
+
+The native embedding test covers imported callbacks, direct and indirect calls,
+argument order, callback result type errors, start functions, and execution
+workers with and without fuel. Module inputs must remain immutable while in use.
 
 ## Official core text tests
 
@@ -63,12 +80,13 @@ ctest --test-dir build/sanitized --output-on-failure
 
 ## GitHub Actions
 
-`.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch.
-Its six native jobs cover macOS, Linux, and Windows, each on x86_64 and ARM64.
-Each job builds with `BUILD_TESTING=ON`, runs CTest, installs the project, and
-uploads a tar archive containing the CLI, shared library, headers, and package.
+The workflow used for version 0.2.0 ran six native jobs covering macOS, Linux,
+and Windows, each on x86_64 and ARM64. Each job built with `BUILD_TESTING=ON`,
+ran CTest, installed the project, and uploaded a tar archive containing the CLI,
+shared library, headers, and package. That workflow was removed after the
+successful runs; no workflow is currently configured in this repository.
 
-CTest includes `validator` and `runtime`. The runtime check in
+CTest now includes `validator`, `embedding`, and `runtime`. The runtime check in
 `tests/runtime_smoke.cmake` generates its WAT and Wasm inputs inside the build
 directory and invokes the newly built CLI. It checks:
 
@@ -83,8 +101,9 @@ directory and invokes the newly built CLI. It checks:
 
 Each CLI process has a timeout, and process crashes or timeouts fail the check.
 These are smoke checks, not proof of complete MVP conformance or JIT correctness.
-They do not yet cover the custom host-module API, concurrent embedding calls,
-all numeric boundaries, every instruction, or installed consumer linking.
+The separate embedding and differential tests extend this coverage. Concurrent
+embedding invocations, every numeric boundary and instruction, and installed
+consumer linking still need additional coverage.
 
 ## Remaining coverage
 

@@ -36,6 +36,8 @@ add_library(watx_core SHARED
     src/jit/jit.cpp
     src/jit/platform_x86_64.cpp
     src/jit/platform_arm64.cpp
+    src/jit/platform_fast_arm64.cpp
+    src/jit/platform_fast_x86_64.cpp
     src/jit/platform_code_memory.cpp
     src/platform/threads.cpp
 )
@@ -91,6 +93,15 @@ if(BUILD_TESTING)
     set_target_properties(watx_validator_tests PROPERTIES
         CXX_STANDARD 98 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     add_test(NAME validator COMMAND watx_validator_tests)
+    add_executable(watx_embedding_tests tests/runtime_embedding.cpp)
+    target_link_libraries(watx_embedding_tests PRIVATE watx_core)
+    set_target_properties(watx_embedding_tests PROPERTIES
+        CXX_STANDARD 98 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(MSVC)
+        target_link_options(watx_embedding_tests PRIVATE /STACK:8388608)
+    endif()
+    add_test(NAME embedding COMMAND watx_embedding_tests)
     if(CMAKE_GENERATOR_PLATFORM)
         set(WATX_TEST_PROCESSOR "${CMAKE_GENERATOR_PLATFORM}")
     elseif(CMAKE_OSX_ARCHITECTURES)

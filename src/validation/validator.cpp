@@ -43,7 +43,12 @@ struct Control {
 class FunctionValidator {
   public:
     FunctionValidator(const Module &m, std::size_t index)
-        : module_(m), function_(m.functions[index]), index_(index), type_(get_type()) {}
+        : module_(m), function_(m.functions[index]), index_(index), type_(get_type()), maximum_(0) {
+    }
+
+    std::size_t maximum_stack() const {
+        return maximum_;
+    }
 
     void run() {
         if (function_.imported) {
@@ -78,6 +83,7 @@ class FunctionValidator {
     const Function &function_;
     std::size_t index_;
     const FunctionType &type_;
+    std::size_t maximum_;
     std::vector<ValueType> locals_, stack_;
     std::vector<Control> controls_;
 
@@ -95,6 +101,8 @@ class FunctionValidator {
 
     void push(ValueType t) {
         stack_.push_back(t);
+        if (stack_.size() > maximum_)
+            maximum_ = stack_.size();
     }
 
     ValueType pop_any() {
@@ -633,6 +641,14 @@ void validate_function_job(void *context, std::size_t index) {
     const ValidationContext &validation = *static_cast<ValidationContext *>(context);
     FunctionValidator(*validation.module, index).run();
 }
+}
+
+std::size_t analyze_function_stack(const Module &module, std::size_t index) {
+    if (index >= module.functions.size())
+        fail("function index is out of range");
+    FunctionValidator validator(module, index);
+    validator.run();
+    return validator.maximum_stack();
 }
 
 void validate_module(const Module &module, unsigned workers) {

@@ -8,6 +8,7 @@
 #include <watx/jit/jit.h>
 #include <watx/jit/platform/code_memory.h>
 #include <watx/platform/threads.h>
+#include <watx/validator.h>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <watx/jit/x86_64/platform/emitter.h>
 #elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
@@ -44,21 +45,25 @@ static uint32_t jit_step_gateway(RuntimeFrame *frame, uint32_t pc) {
 struct JitEngine::Impl {
     struct Compiled {
         void (*entry)(RuntimeFrame *);
-        Compiled() : entry(0) {}
+        void (*fast_entry)(RuntimeFrame *, RuntimeNativeFrame *);
+        Compiled() : entry(0), fast_entry(0) {}
     };
+    const Module &module;
     std::vector<unsigned> instruction_counts;
     std::vector<unsigned char> imported;
     std::vector<Compiled> code;
     std::vector<unsigned> defined_functions;
     std::vector<std::vector<unsigned char> > emitted;
+    std::vector<std::size_t> fast_offsets;
     void *memory;
     std::size_t memory_size;
     bool prepared;
-    Impl(const Module &module) : memory(0), memory_size(0), prepared(false) {
+    Impl(const Module &m) : module(m), memory(0), memory_size(0), prepared(false) {
         instruction_counts.resize(module.functions.size());
         imported.resize(module.functions.size());
         code.resize(module.functions.size());
         emitted.resize(module.functions.size());
+        fast_offsets.resize(module.functions.size());
         for (std::size_t i = 0; i < module.functions.size(); ++i) {
             instruction_counts[i] = static_cast<unsigned>(module.functions[i].code.size());
             imported[i] = module.functions[i].imported ? 1 : 0;
@@ -78,17 +83,28 @@ struct JitEngine::Impl {
         unsigned function = impl->defined_functions[index];
         std::vector<unsigned> instructions;
         std::vector<unsigned char> bytes;
+        std::vector<unsigned char> fast;
         const unsigned count = impl->instruction_counts[function];
         instructions.resize(count);
         for (unsigned pc = 0; pc < count; ++pc)
             instructions[pc] = pc;
 #if defined(__x86_64__) || defined(_M_X64)
         jit_platform::emit_x86_64(instructions, &jit_step_gateway, bytes);
+        jit_platform::emit_fast_x86_64(impl->module.functions[function].code, &jit_step_gateway,
+                                       fast);
 #elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
         jit_platform::emit_arm64(instructions, &jit_step_gateway, bytes);
+        jit_platform::emit_fast_arm64(impl->module.functions[function].code, &jit_step_gateway,
+                                      fast);
 #else
         throw std::runtime_error("native JIT is not supported on this processor");
 #endif
+        const std::size_t padding = (4096U - bytes.size() % 4096U) % 4096U;
+        if (bytes.size() > static_cast<std::size_t>(-1) - padding)
+            throw std::length_error("JIT function code size overflow");
+        bytes.resize(bytes.size() + padding, 0);
+        impl->fast_offsets[function] = bytes.size();
+        bytes.insert(bytes.end(), fast.begin(), fast.end());
         impl->emitted[function].swap(bytes);
     }
 };
@@ -99,6 +115,7 @@ JitEngine::~JitEngine() {
 void JitEngine::prepare(unsigned workers) {
     if (impl_->prepared)
         return;
+    validate_module(impl_->module, workers);
     if (impl_->defined_functions.empty()) {
         impl_->prepared = true;
         return;
@@ -138,6 +155,10 @@ void JitEngine::prepare(unsigned workers) {
             if (sizeof(impl_->code[function].entry) != sizeof(address))
                 throw std::runtime_error("native function pointer size is unsupported");
             std::memcpy(&impl_->code[function].entry, &address, sizeof(address));
+            address = base + offsets[function] + impl_->fast_offsets[function];
+            if (sizeof(impl_->code[function].fast_entry) != sizeof(address))
+                throw std::runtime_error("native function pointer size is unsupported");
+            std::memcpy(&impl_->code[function].fast_entry, &address, sizeof(address));
         }
         for (std::size_t i = 0; i < impl_->emitted.size(); ++i) {
             std::vector<unsigned char> empty;
@@ -160,6 +181,8 @@ void JitEngine::prepare(unsigned workers) {
 void JitEngine::execute(RuntimeFrame &frame) {
     if (!impl_->prepared)
         throw std::runtime_error("JIT engine has not been prepared");
+    if (!frame.instance || &frame.instance->module() != &impl_->module)
+        throw std::runtime_error("JIT engine and runtime instance use different modules");
     if (frame.function_index >= impl_->code.size())
         throw std::runtime_error("JIT function index is out of range");
     if (impl_->imported[frame.function_index])
@@ -167,7 +190,11 @@ void JitEngine::execute(RuntimeFrame &frame) {
     void (*entry)(RuntimeFrame *) = impl_->code[frame.function_index].entry;
     if (!entry)
         throw std::runtime_error("JIT function has no compiled entry point");
-    entry(&frame);
+    RuntimeNativeFrame *native = runtime_native_frame(&frame);
+    if (native && impl_->code[frame.function_index].fast_entry)
+        impl_->code[frame.function_index].fast_entry(&frame, native);
+    else
+        entry(&frame);
     if (!frame.finished) {
         frame.failed = true;
         frame.finished = true;

@@ -9,6 +9,8 @@ namespace jit_platform {
 typedef uint32_t (*StepFunction)(RuntimeFrame *, uint32_t);
 WATX_API void emit_x86_64(const std::vector<unsigned> &instructions, StepFunction step,
                           std::vector<unsigned char> &bytes);
+WATX_API void emit_fast_x86_64(const std::vector<Instruction> &instructions, StepFunction step,
+                               std::vector<unsigned char> &bytes);
 }
 }
 #endif

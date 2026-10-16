@@ -323,10 +323,16 @@ watx app.wasm --run --function add --jit 0 -- i32:10 i32:5
 ```
 
 The interpreter is the default. `--jit` selects a native **baseline JIT** for the
-current machine. It emits a native block for each Wasm instruction and calls
-shared runtime helpers for its operations. Native dispatch follows the next
-instruction selected by the runtime. This is a helper-based implementation,
-without an optimizing compiler or a verified speed advantage.
+current machine. It emits native instructions for constants, locals, common
+integer arithmetic and comparisons, and selected f64 operations. Other
+instructions use shared runtime helpers for control flow, calls, checked memory
+access, and trapping operations. This baseline compiler does not perform
+register allocation or optimizing compiler passes; speed depends on the workload.
+
+Fuel limits, tracing, and cancellation contexts use the checked instruction
+path. The interpreter also uses decoded instructions and a fast loop for common
+operations when those execution settings are inactive. Both engines retain
+bounds checks for memory accesses and the configured call-stack limit.
 
 JIT preparation compiles all defined functions before execution. `--jit` requires
 `--run`. Its optional count controls execution workers, and does not change

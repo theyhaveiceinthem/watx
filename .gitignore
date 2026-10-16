@@ -20,6 +20,7 @@
 
 /watx
 /watx_validator_tests
+/watx_embedding_tests
 *.o
 *.obj
 *.lo
